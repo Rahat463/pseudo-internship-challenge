@@ -1,4 +1,4 @@
-import time
+import concurrent.futures
 import re
 
 from .gmail_client import Email, GmailClientInterface
@@ -20,24 +20,23 @@ class EmailProcessor:
         ]
 
     def filter_emails(self, emails: list[Email]) -> list[Email]:
-        # implement filtering logic based on required keywords
-        filtered = []
-        for email in emails:
-            subject_lower = email.subject.lower()
-            # Check if all required keywords are present in the subject
-            if all(keyword in subject_lower for keyword in self.required_keywords):
-                filtered.append(email)
-        return filtered
+        # Optimized filtering using list comprehension for better performance
+        return [
+            email
+            for email in emails
+            if all(
+                keyword in email.subject.lower() for keyword in self.required_keywords
+            )
+        ]
 
     def extract_name_from_email(self, email_body: str) -> str | None:
-        # implement name extraction logic
+        # Optimized name extraction using compiled regex patterns
         for pattern in self.name_patterns:
             match = pattern.search(email_body)
             if match:
                 name = match.group(1).strip()
                 if name:  # Make sure we have a non-empty name
                     return name
-
         return None
 
     # Use this method. Do not modify it.
@@ -68,27 +67,41 @@ Hiring Team"""
         responses_sent = 0
         # end of non-modifiable block
 
-        # implement email processing logic.
         # 1. Fetch emails from the gmail client
         emails = self.gmail_client.fetch_emails()
 
         # 2. Filter emails based on required keywords
         filtered_emails = self.filter_emails(emails)
 
-        # 3. Process each filtered email: extract name, generate response, send email
+        # 3. Process each filtered email with maximum parallelization
+        responses_to_send = []
+        # Pre-process all data without API calls
         for email in filtered_emails:
-            # Extract name from email body
             name = self.extract_name_from_email(email.body)
-
-            # Generate response based on extracted name
             response_body = self.generate_response(name)
-
-            # Create reply subject
             reply_subject = f"Re: {email.subject}"
+            responses_to_send.append((email.sender, reply_subject, response_body))
 
-            # Send response email
-            if self.gmail_client.send_email(email.sender, reply_subject, response_body):
-                responses_sent += 1
+        # 4. Send emails using thread pool with increased workers for maximum parallelization
+        def send_single_email(email_data):
+            sender, subject, body = email_data
+            return self.gmail_client.send_email(sender, subject, body)
+
+        # Use maximum parallelization - increase max_workers to handle more concurrent operations
+        # This is the key optimization: more threads = faster processing of I/O bound operations
+        max_workers = min(50, len(responses_to_send)) if responses_to_send else 1
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all send operations
+            future_to_email = {
+                executor.submit(send_single_email, email_data): email_data
+                for email_data in responses_to_send
+            }
+
+            # Collect results
+            for future in concurrent.futures.as_completed(future_to_email):
+                if future.result():
+                    responses_sent += 1
 
         # Do not modify this block
         return {
