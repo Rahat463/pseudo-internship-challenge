@@ -83,7 +83,7 @@ Hiring Team"""
             responses_to_send.append((email.sender, reply_subject, response_body))
 
         # 4. Send emails using thread pool with increased workers for maximum parallelization
-        def send_single_email(email_data):
+        def send_single_email(email_data: tuple[str, str, str]) -> bool:
             sender, subject, body = email_data
             return self.gmail_client.send_email(sender, subject, body)
 
